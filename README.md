@@ -29,6 +29,29 @@ Cada módulo expone manualmente las rutas `listar`, `crear`, `guardar`, `editar/
 
 Cada módulo consulta y modifica sus registros mediante Eloquent. Los selects relacionados se cargan desde la base de datos, y los formularios validan los datos antes de crear o actualizar. Configura la conexión definida en `.env` y ejecuta `php artisan migrate` antes de usar los módulos.
 
+## API REST para Postman
+
+La API administrativa requiere un token de Sanctum. Inicia sesión con `POST /api/login`, enviando `Accept: application/json` y el JSON `{"usuario":"...","contraseña":"..."}`. Copia `access_token` de la respuesta y envíalo como `Authorization: Bearer <token>` en las siguientes peticiones. `POST /api/logout` revoca únicamente ese token.
+
+Todos los recursos cuentan con `GET /api/<recurso>`, `POST /api/<recurso>`, `GET /api/<recurso>/{id}`, `PUT` o `PATCH /api/<recurso>/{id}` y `DELETE /api/<recurso>/{id}`. Los recursos son `administradores`, `categorias`, `clientes`, `coleccionables`, `condiciones`, `detalles_pedidos`, `pedidos`, `productos`, `proveedores`, `universos` y `ventas`. Las respuestas son JSON; los errores de validación devuelven los campos que deben corregirse. Las listas están paginadas y aceptan `?per_page=1` a `?per_page=100`.
+
+Para imágenes, envía el archivo en `form-data` con el nombre del campo correspondiente (`imagen`, `imagen1`, `imagen2` o `imagen3`); también se aceptan referencias de imagen en texto. Los archivos se guardan en Cloudinary, por lo que para subirlos configura sus variables en `.env`.
+
+### Crear y conectar la base de datos local (XAMPP)
+
+Inicia MySQL desde el panel de XAMPP. Entra a phpMyAdmin, crea una base llamada `proyectooc` con cotejamiento `utf8mb4_unicode_ci` y configura la conexión en el `.env` de este proyecto. Para la instalación local típica de XAMPP:
+
+```dotenv
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=proyectooc
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+Si tu usuario MySQL tiene contraseña, coloca su valor en `DB_PASSWORD`. Después ejecuta `php artisan config:clear` y `php artisan migrate` para crear las tablas. `migrate` conserva las tablas y datos existentes; evita `migrate:fresh`, porque elimina las tablas. Crea un administrador activo para el primer inicio de sesión con `php artisan api:admin`; el comando solicita sus datos, oculta la contraseña y la pide dos veces para confirmarla.
+
 ## Autenticación administrativa
 
 El acceso al panel y a las rutas CRUD se realiza con el guard de sesión `admin`, basado en el modelo `Administrador`. El formulario está en `/login`; usa los campos `usuario` y `contraseña`, y solo permite cuentas con `estado = 1`. El CRUD cifra las contraseñas con `Hash::make()` al guardarlas. Para ingresar por primera vez, debe existir un administrador activo creado desde la base de datos o por el proceso de inicialización del proyecto.

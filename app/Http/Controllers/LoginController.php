@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\Administrador;
 use App\Models\Cliente;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
+use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Socialite\Facades\Socialite;
 use Laravel\Socialite\Two\InvalidStateException;
 
@@ -28,33 +31,53 @@ class LoginController extends Controller
         return view('auth.login');
     }
 
-    public function login(Request $request): RedirectResponse
+    public function login(Request $request): RedirectResponse|JsonResponse
     {
-        $datos = $request->validate([
-            'usuario' => ['required', 'string', 'max:50'],
+        $datos = Validator::make($request->all(), [
+            'usuario' => ['required', 'string', 'max:50', 'exists:administradores,usuario'],
             'contraseña' => ['required', 'string'],
-        ]);
+        ])->validate();
 
         $administrador = Administrador::query()
             ->where('usuario', $datos['usuario'])
             ->first();
 
         if ($administrador && !$administrador->estado) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Esta cuenta se encuentra desactivada.',
+                    'errors' => ['status' => ['Esta cuenta se encuentra desactivada.']],
+                ], 422);
+            }
+
             return back()
                 ->withErrors(['status' => 'Esta cuenta se encuentra desactivada.'])
                 ->withInput($request->only('usuario'));
         }
 
-        $credenciales = [
-            'usuario' => $datos['usuario'],
-            'password' => $datos['contraseña'],
-            'estado' => true,
-        ];
+        if (
+            $administrador
+            && $administrador->estado
+            && Hash::check($datos['contraseña'], $administrador->contraseña)
+        ) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'token_type' => 'Bearer',
+                    'access_token' => $administrador->createToken('postman')->plainTextToken,
+                ]);
+            }
 
-        if (Auth::guard('admin')->attempt($credenciales)) {
+            Auth::guard('admin')->login($administrador);
             $request->session()->regenerate();
 
             return redirect()->intended(route('dashboard'));
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Usuario o contraseña incorrectos.',
+                'errors' => ['error' => ['Usuario o contraseña incorrectos.']],
+            ], 422);
         }
 
         return back()
@@ -143,12 +166,28 @@ class LoginController extends Controller
         return redirect()->route('inicio');
     }
 
-    public function logout(Request $request): RedirectResponse
+    public function logout(Request $request): RedirectResponse|JsonResponse
     {
+        if ($request->expectsJson()) {
+            $administrador = $request->user();
+            $token = $administrador instanceof Administrador
+                ? $administrador->currentAccessToken()
+                : null;
+
+            if ($token instanceof PersonalAccessToken) {
+                $token->delete();
+            }
+
+            return response()->json(['message' => 'Sesión cerrada correctamente.']);
+        }
+
+        $usuario = Auth::guard('admin')->user() ?? Auth::guard('web')->user();
         Auth::guard('admin')->logout();
         Auth::guard('web')->logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
+
+        $usuario?->tokens()->delete();
 
         return redirect()->route('login');
     }

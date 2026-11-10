@@ -6,12 +6,10 @@ use App\Models\Producto;
 use App\Models\Categoria;
 use App\Models\Proveedor;
 use App\Services\CloudinaryImageStorage;
-use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
-use Illuminate\View\View;
 
 class ProductoController extends Controller
 {
@@ -34,69 +32,72 @@ class ProductoController extends Controller
         'proveedor_id' => [Proveedor::class, 'nombre_empresa'],
     ];
 
-    public function listar(): View
+    public function listar(): JsonResponse
     {
         $registros = Producto::query()->latest()->limit(100)->get()->toArray();
 
-        return view('productos.mvc.listado', $this->datosVista(['registros' => $registros]));
+        return response()->json($this->datosVista(['registros' => $registros]));
     }
 
-    public function vistaFormulario(): View
+    public function vistaFormulario(): JsonResponse
     {
-        return view('productos.mvc.registro', $this->datosVista());
+        return response()->json($this->datosVista());
     }
 
-    public function registrar(Request $request): RedirectResponse
+    public function registrar(Request $request): JsonResponse
     {
         $datos = Validator::make($request->all(), $this->reglasValidacion())->validate();
         $registro = Producto::create($this->prepararDatos($datos));
 
-        return redirect()->route('productos.listar')
-            ->with('exito', 'Registro de Productos guardado correctamente.')
-            ->with('registroId', $registro->getKey());
+        return response()->json([
+            'message' => 'Producto creado correctamente.',
+            'producto' => $registro,
+        ], 201);
     }
 
-    public function vistaEdicion(int $id): View
+    public function vistaEdicion(int $id): JsonResponse
     {
         $registro = Producto::query()->findOrFail($id);
 
-        return view('productos.mvc.edicion', $this->datosVista([
+        return response()->json($this->datosVista([
             'id' => $id,
             'registro' => $registro->toArray(),
         ]));
     }
 
-    public function actualizar(Request $request, int $id): RedirectResponse
+    public function actualizar(Request $request, int $id): JsonResponse
     {
         $registro = Producto::query()->findOrFail($id);
-        $datos = Validator::make($request->all(), $this->reglasValidacion($id))->validate();
+        $datos = Validator::make($request->all(), $this->reglasValidacion(true))->validate();
         $imagenAnterior = $registro->imagen;
         $registro->update($this->prepararDatos($datos));
+
         if ($registro->imagen !== $imagenAnterior) {
             app(CloudinaryImageStorage::class)->delete($imagenAnterior);
         }
 
-        return redirect()->route('productos.listar')
-            ->with('exito', 'Registro de Productos actualizado correctamente.');
+        return response()->json([
+            'message' => 'Producto actualizado correctamente.',
+            'producto' => $registro->fresh(),
+        ]);
     }
 
-    public function vistaMostrar(int $id): View
+    public function vistaMostrar(int $id): JsonResponse
     {
         $registro = Producto::query()->findOrFail($id);
 
-        return view('productos.mvc.mostrar', $this->datosVista([
+        return response()->json($this->datosVista([
             'id' => $id,
             'registro' => $registro->toArray(),
         ]));
     }
 
-    public function borrar(int $id): RedirectResponse
+    public function borrar(int $id): JsonResponse
     {
         $registro = Producto::query()->findOrFail($id);
         $registro->update(['estado' => false]);
 
-        return redirect()->route('productos.listar')
-            ->with('exito', 'Registro de Productos desactivado correctamente.');
+        return response()->json(['message' => 'Producto desactivado correctamente.']);
     }
 
     private function datosVista(array $extra = []): array
@@ -117,37 +118,26 @@ class ProductoController extends Controller
         ], $extra);
     }
 
-    private function reglasValidacion(?int $id = null): array
+    private function reglasValidacion(bool $actualizacion = false): array
     {
-        $reglas = [];
+        $required = $actualizacion ? 'sometimes|required' : 'required';
 
-        foreach ($this->fields as $campo) {
-            $tipo = $campo['type'] ?? 'text';
-            $requerido = ($campo['required'] ?? false)
-                && !($id !== null && in_array($tipo, ['password', 'image'], true));
-            $reglasCampo = [$requerido ? 'required' : 'nullable'];
-
-            if ($tipo === 'email') {
-                $reglasCampo[] = 'email';
-            } elseif ($tipo === 'number') {
-                $reglasCampo[] = 'numeric';
-            } elseif ($tipo === 'date') {
-                $reglasCampo[] = 'date';
-            } elseif ($tipo === 'image') {
-                $reglasCampo = array_merge($reglasCampo, ['image', 'mimes:jpg,jpeg,png,webp', 'max:2048']);
-            } elseif ($tipo === 'select') {
-                $reglasCampo[] = Rule::in(array_keys($this->opcionesCampo($campo['name'], $campo['options'] ?? [])));
-            }
-
-            if ($campo['unique'] ?? false) {
-                $reglaUnica = Rule::unique((new Producto())->getTable(), $campo['name']);
-                $reglasCampo[] = $id === null ? $reglaUnica : $reglaUnica->ignore($id);
-            }
-
-            $reglas[$campo['name']] = array_merge($reglasCampo, $campo['rules'] ?? []);
-        }
-
-        return $reglas;
+        return [
+            'categoria_id' => [$required, 'integer', 'exists:categorias,id'],
+            'proveedor_id' => [$required, 'integer', 'exists:proveedores,id'],
+            'nombre' => [$required, 'string', 'max:255'],
+            'descripcion' => [$required, 'string'],
+            'precio' => [$required, 'numeric', 'min:0'],
+            'existencia' => [$required, 'integer', 'min:0'],
+            'marca' => [$required, 'string', 'max:255'],
+            'estado' => [$required, 'boolean'],
+            'imagen' => [
+                $actualizacion ? 'sometimes' : 'required',
+                'image',
+                'mimes:jpg,jpeg,png,webp',
+                'max:2048',
+            ],
+        ];
     }
 
     private function prepararDatos(array $datos): array
